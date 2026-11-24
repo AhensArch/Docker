@@ -67,3 +67,58 @@ A container stays alive **only as long as its main process (PID 1) stays running
    ```
    *(Press `Ctrl + C` while it is waiting if you want to stop early.)*
    *Verification:* The container stays active for the full 5 seconds (or until interrupted) because the foreground `sh` process has not exited yet.
+
+---
+
+### Other Ways to Trigger `Exited (0)` in a Container
+
+* **A command that finishes immediately:** Using `CMD ["echo", "done"]` or `CMD ["true"]` prints output or does nothing, then exits cleanly with code `0`.
+* **A short-lived script:** Running a script or command that completes its work and returns without staying open (such as a one-off setup or print command) exits with `0` as soon as the last line finishes.
+* **A server that exits early instead of blocking:** If a program or wrapper starts something else and returns `0` immediately—or hits an early return path coded to exit `0`—the container stops with `Exited (0)`.
+* **Stopping the container normally (`docker stop`):** Sending a normal stop signal lets a well-behaved process shut down cleanly, resulting in a `0` (or `143` if killed by `SIGTERM`) exit code.
+
+---
+
+## Scenario: Short-Lived Script (`Exited (0)`)
+
+### Change to the Base App
+
+Update the `Dockerfile` instruction to run a short-lived Python snippet:
+
+```dockerfile
+CMD ["sh", "-c", "python - <<'EOF'\nprint('Starting short-lived script...')\ntotal = sum(range(5))\nprint(f'Completed with total={total}')\nEOF"]
+```
+
+Build and run the container:
+
+```bash
+docker build -t hello_app .
+docker run -d -p 5000:5000 --name=hello_app hello_app:latest
+```
+
+---
+
+### What Your Output Shows
+
+```text
+docker run -d -p 5000:5000 --name=hello_app hello_app:latest
+f81289f83f671e37e717d2f1590fb8cff053474a446b52e9f7d7ed4ee3db38b6
+
+docker ps
+CONTAINER ID   IMAGE     COMMAND   CREATED   STATUS    PORTS     NAMES
+
+docker ps -a
+CONTAINER ID   IMAGE              COMMAND                  CREATED         STATUS                     PORTS     NAMES
+f81289f83f67   hello_app:latest   "sh -c 'python - <<'…"   6 seconds ago   Exited (0) 5 seconds ago             hello_app
+
+docker logs f81289f83f67
+Starting short-lived script...
+Completed with total=10
+```
+
+1. **Completed successfully, not crashed:** `Exited (0)` means the command finished with zero errors. In Docker, `Exited (0)` is normal for batch jobs or one-off scripts, whereas a long-running service like a Flask web server is expected to stay up.
+2. **Logs show full execution:** Unlike `python app.py &` (where `sh` exited immediately and orphaned the background process), here `python` ran in the foreground until `sum(range(5))` finished (`0 + 1 + 2 + 3 + 4 = 10`) and printed `Completed with total=10`.
+3. **Why `docker ps` is empty:** Once the script finishes and `sh` exits, PID 1 is done, so the container stops and moves to `docker ps -a`.
+
+---
+
